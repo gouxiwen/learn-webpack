@@ -1,0 +1,83 @@
+基于webpack4.x
+cnpm i webpack webpack-cli -D
+1.context：当前程序的运行环境目录，默认是""，也就是process.cwd()
+2.入口的三种形式
+字符串、数组、对象
+字符串和数组的默认入口名称是main
+数组中的多个模块一次加载进来，并将最后一个module.expots作为入口模块的导出，注意数组形式的不是多入口配置
+对象可以知道入口名称，用于多入口配置
+3.出口里的占位符
+name 入口名称
+hash 整个项目的hash，构建一次，产生一次
+chunkhash 根据不同入口entry进行依赖解析，构建对应的chunk，生产相应的hash，只要组成entry的模块没有内容变动，hash就不变，一般多入口可以使用
+contenthash 文件单独抽离时，根据单独抽离的内容生成的hash，一般css文件、图片等文件单独抽离时可以使用
+使用示例：filename: [name]-[hash:6]，数字可以指定hash长度
+4.模式：mode
+production，development，none
+production模式会启动一些默认插件，压缩代码等
+5.module
+处理不认识的模块，webpack默认只能处理js和json文件，其他格式文件使用loader处理
+使用示例：处理css文件
+['style-loader','css-loader']，执行顺序是从后往前，一个loader只做一件事，loader是个函数
+css-loader的作用是把css文件添加到js中
+style-loader的作用是在之前的js中添加把css提取到style标签中添加到html中的逻辑
+6.plugins
+插件，补充webpack没有实现的功能，执行于webpack的生命周期，插件是个类
+7.css-loader中开启modules，可以在js中访问css中的类名
+比如：import css from './demo.css'
+demo.csszhong 有个类叫bg
+这个类就可以直接通过css.bg访问类了
+8.file-loader，处理txt，cvs，svg，excel图片等文件资源的，仅仅把文件从源目录移到打包目录，对文件不做任何处理
+option配置
+name:支持占位符[name]_[hash].[ext]
+outputPath:指定出口目录，默认是在主配置出口目录下
+9.url-loader包含了file-loader的所有功能
+url-loader有limit配置项目
+10.html-webpack-plugin
+支持ejs模版语法
+11.webpackDevServer是基于express开发的一个服务器，它的配置项是devServer
+contentBase服务访问的根目录，默认是主配置的outpath
+12.webpackDevServer提供两个服务中间件钩子，before和after
+before：devServer内部的所有中间件执行之前，这个钩子可以利用webpackDevServer来mock数据
+13.webpackDevServer的HMR，热模块更新
+hot:是否开启热更新，开启后需要配合webpack自带的插件webpack.HotModuleReplacementPlugin使用
+hotOnly：即使热更新失败也不用刷新浏览器（默认情况下热更新失败会刷新浏览器）
+css使用MiniCssExtractPlugin会导致css热更新失败，所以一般建议生产环境才使用这个插件
+热更新不支持js更新，需要手动监听，非常繁碎，好在现在流行的前端框架都有对应都loader支持，比如vue-loader、react-hot-loader
+面试重点：
+14.babel 版本7.x
+预设preset env匹配个大浏览器厂商支持去转换语法
+babel-loader只是连接webpack和babel的桥梁，不参与语法转换，语法转换是@babel/core @babel/preset-env做的事
+@babel/core用来生成ast和输出转换结果，@babel/preset-env插件提供转换规则
+15.polyfill，垫片，用来让浏览器支持es6+的新特性
+原理：polyfill是es6+的ECMA规范库，引入以后不支持新特性的浏览器会查询规范库的api，然后自己根据api实现新的特性挂载到window对象供代码使用，因此polyfill会污染全局对象
+@babel/polyfill，需要放在生产依赖
+polyfill本身很大，需要按需引入，在babel-loader的配置项preset里进行配置usebuiltIns选项
+16.babel插件有两种，一种用来转换，一种哟ing来解析，@babel-preset-react属于解析插件，用来解析jsx语法
+preset: [
+  [
+    "@babel/preset-env",
+    {
+      target: {
+        配置支持的浏览器
+      },
+      corejs: 2 babel核心库版本
+      usebuiltIns: "usage" 配置polyfill，有三种值entry、usage、false
+      entry，按需引入，需要显式地引入@babel/polyfill
+      usage，自动分析是否需要并按需引入（推荐），目前在实验阶段
+      false，如果引入就是全量引入（不推荐）
+    }
+  ],
+  "@babel-preset-react"
+]
+17.@babel-plugin-transform-runtime和@babel/polyfill比较
+@babel-plugin-transform-runtime
+优点：
+1.为api提供沙箱的垫片方案，不会污染全局的api，因此适合用在第三方的开发产品中
+2.多次使用只会打包一次
+缺点：不支持实例化的方法
+@babel/polyfill
+优点：支持所有特性，适合单独运行的项目中
+缺点：
+1.污染全局对象
+2.打包体积庞大

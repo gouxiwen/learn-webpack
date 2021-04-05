@@ -1,0 +1,9 @@
+1.打包原理
+生成一个自启动函数__webpack_require__，来实现自己的模块化，把代码都缓存在installedModules里，代码文件以参数传递进来，
+传入的参数是一个对象，该对象里以各个文件路径为key，以带有import和export形参的函数为value，
+在该函数里使用eval方法执行相关语句，代码内部的require都被替换成了webpack_require,
+传入import和export在自启动函数里定义实现
+实例见webpack-simple
+2.loader
+loader是一个函数，是声明式函数，不能是箭头函数，箭头函数没有自己的上下文对象this
+3.plugin

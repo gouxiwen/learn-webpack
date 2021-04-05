@@ -1,0 +1,223 @@
+优化分为构建优化和输出结果使用体验优化
+构建优化
+1.loader是打包耗时大户，用include和exclude控制以下内容
+2.resolve配置项
+modules确定第三方库查找范围，默认情况下是从本目录开始逐级向上查找node_modules目录
+alias起别名，有两个作用，1，方便开发使用，2.减少打包时模块查找过程，默认情况会去入口文件查找加载模块
+alias: {
+  '@': './src',
+  'react': './node_modules/react/umd/react.pruduction.min.js'
+}
+extensions默认导入文件的后缀列表，查找匹配过程有耗时，建议这个列表尽量小，导入文件尽量带上后缀名
+3.externals排除掉不想打包进的模块，一般可以以script标签引入cdn资源
+如：
+import _ from 'lodash';
+externals: {
+  "lodash": {
+        commonjs: "lodash",//如果我们的库运行在Node.js环境中，import _ from 'lodash'等价于const _ = require('lodash')
+        commonjs2: "lodash",//同上
+        amd: "lodash",//如果我们的库使用require.js等加载,等价于 define(["lodash"], factory);
+        root: "_"//如果我们的库在浏览器中使用，需要提供一个全局的变量‘_’，等价于 var _ = (window._) or (_);
+  }
+}
+以上commonjs、commonjs2、amd、root指的是运行环境libraryTarget，其中root是默认的，暴露一个global变量出来
+root模式也可以写成下面这样：
+externals: {
+  "lodash":  "_"
+}
+4.使用speed-measure-webpack-plugin插件量化各个插件loader的耗费时间
+const SpeedMeasurPlugin = require('speed-measure-webpack-plugin')
+const smp = new SpeedMeasurPlugin()
+const config = {
+  各种配置
+  ...
+}
+module.exports = smp.wrap(config)
+5.使用webpack-bundle-analyzer插件分析打包后的模块依赖关系
+const BundelAnalyzerPlugin = require('webpack-bundle-analyzer').BundelAnalyzerPlugin
+plugins: [
+  // ...
+  new BundelAnalyzerPlugin()
+]
+6.使用DllPlugin动态链接库插件把短期内不会改变的第三方库预编译后缓存起来，后面打包只编译业务代码，提升打包速度
+ DllPlugin需要配合DllReferencePlugin使用，webpack已经内置了DllPlugin和DllReferencePlugin
+ 只使用在开发环境
+ eg:
+  1.新建独立的配置文件webpack.dll.config.js
+  // webpack.dll.config.js
+  const path = require('path')
+  const { DllPlugin } = require('webpack')
+  module.exports = {
+    mode: 'development',
+      entry: {
+        // 第三方库
+        react: ['react', 'react-dom', 'react-redux']
+      },
+      output: {
+        // 输出的动态链接库的文件名称，[name] 代表当前动态链接库的名称，
+        filename: '[name].dll.js',
+        path: resolve('dist/dll'),
+        library: '[name]_dll_[hash]'  // 对外暴露的库名称，library必须和后面dllplugin中的name一致
+        libraryTarget: 'var' // 和library配合使用，默认var，即以var变量把library暴露出去
+      },
+      plugins: [
+      // 接入 DllPlugin
+        new webpack.DllPlugin({
+          // 动态链接库的全局变量名称，需要和 output.library 中保持一致
+          // 该字段的值也就是输出的 manifest.json 文件 中 name 字段的值
+          name: '[name]_dll_[hash]',
+          // 描述动态链接库的manifest.json文件输出时的文件名称，manifest.json是dll和webpack之间的映射文件
+          path: path.join(__dirname, 'dist/dll', '[name].manifest.json')
+        }),
+      ]
+    }
+    package.json中加入打包动态库脚本
+    "dll": "webpack -p --progress --config ./webpack.dll.conf.js"
+    执行脚本打包动态链接库
+    2.webpack中关联动态链接库文件
+    打包的时候会首先去找有没有动态链接库，有的话就不会把相关模块打包进bundle了，只映射manifest.json里的相关信息进来
+    // webpack.config.js (process.env.NODE_ENV === "development") 开发环境中
+    plugin: [
+      new webpack.DllReferencePlugin({
+        context: __dirname,
+        manifest: path.join(__dirname, 'dist/dll', 'react.manifest.json')
+      })
+    ]
+    3.在入口文件引入dll文件。
+    生成的dll暴露出的是全局函数，因此还需要在入口文件里面引入对应的dll文件。
+    <body>
+      <div id="app"></div>
+      <!--引用dll文件-->
+      <script src="../../dist/dll/react.dll.js" ></script>
+    </body>
+7.使用hard-source-webpack-plugin提升打包速度，硬件缓存，第一次正常，后面打包速度会很快
+使用和普通插件一样，直接new，官方推荐使用，而不是使用DllPlugin插件
+8.使用happypack，充分利用电脑多核cpu的能力，多进程打包
+  const HappyPack = require('happypack');
+  const happyThreadPool = HappyPack.ThreadPool({ size: os.cups().length });
+  修改原来的loader
+  use: ['happypack/loader?id=babel'], 其中id是自定义，是和后面的插件配置中使用的关联
+  添加HappyPack插件，改了几个loader，new几个HappyPack插件
+    new HappyPack({
+        /*
+          * 必须配置
+          */
+        // id 标识符，要和 rules 中指定的 id 对应起来
+        id: 'babel',
+        // 需要使用的 loader，用法和 rules 中 Loader 配置一样
+        // 可以直接是字符串，也可以是对象形式
+        loaders: ['babel-loader?cacheDirectory'], // 和原loader配置一样
+        threads: Number // 类型，指示对应 loader 编译源文件时同时使用的进程数，默认是 3
+        threadPool: HappyThreadPool， //HappyThreadPool对象，代表共享进程池，即多个 HappyPack 实例都使用同一个共享进程池中的子进程去处理任务，以防止资源占用过多
+    })
+  注意：
+  1.小项目使用happypack构建时间反而会增加，因为开启进程需要时间，因此happypack适用于大中型项目
+  2.和minicssplugin搭配不是很好，有可能报错
+使用体验优化
+1.静态文件的处理
+out.publicPath可以配置静态文件cdn地址
+2.压缩css文件，使用OptimizeCssAssetsPlugin插件和cssnano压缩配置，cssnano是postcss的一个依赖
+3.压缩html，使用HtmlWebpackPlugin插件的minify配置
+4.压缩js代码
+uglifyjs-webpack-plugin不支持es6语法，用terser-webpack-plugin代替
+optimization: {
+  minimizer: [new TerserJSPlugin({
+        cache: true, // 是否缓存
+        parallel: true, // 是否并行打包
+        sourceMap: true
+    })]
+}
+5.gzip压缩，compresion-webpack-plugin插件将静态资源压缩,并生成.gz文件
+6.摇树（tree shaking），摇掉dead code
+dead code
+  代码不会执行
+  代码执行的结果不会被用到
+  代码只会影响死变量（只写不读）
+针对css和js，js只支持esModule不支持commonjs
+css：
+使用purifycss-webpack插件，安装插件 purify-css purifycss-webpack glob-all
+const PurifyCSS = require("purifycss-webpack");
+const glob = require("glob-all"); 用来定位文件
+let purifyCSS = new PurifyCSS({
+  paths: glob.sync([
+    // 要做CSS Tree Shaking的路径文件
+    path.resolve(__dirname, "./*.html"),
+    path.resolve(__dirname, "./src/*.js")
+  ])
+});
+js：
+webpack4.x自己支持，只需打开配置，生产模式默认开启
+optimization: {
+  useExports: true
+}
+sideEffects处理副作用，在package.json中配置配置用以排除被摇掉的模块
+// package.json
+sideEffects: false 对所有模块tree shaking
+sideEffects: ['*.css', '@babel/polyfill'] 排除掉不需要tree shaking的模块
+这样在js中引入css才不会被tree shaking，如 import './main.css'
+7.代码分割（code splitting），抽离公共模块
+optimization: {
+  splitChunks: {
+    chunk: 'all', // initial同步模块，async异步模块，all所有模块
+    minSize: 30000,  // （默认值：30000）块的最小大小，大于30kb就进行分割
+    maxSize: 0,  // 对模块进行二次分割时使用，不推荐使用 
+    minChunks: 1, // （默认值：1）分割前共享模块的最小块数
+    maxInitialRequests: 3, // （默认值3）入口点上的最大并行请求数，超过并行请求数后会优先拆分尺寸更大的模块，尺寸较小的不会进行拆分
+    maxAsyncRequests: 5, // （缺省值5）按需加载时（异步模块）的最大并行请求数，超过并行请求数后会优先拆分尺寸更大的模块，尺寸较小的不会进行拆分
+    automaticNameDelimiter: '-', // webpack 将使用块的起源和名称来生成名称: `vendors~main.js`,如项目与"~"冲突，则可通过此值修改，Eg: '-'
+    name: true, // 打包后的名称，除了布尔值，还可以接收一个函数function
+    // 缓存组（自定义分割组），优先级priority高于上面的默认组配置
+    cacheGroups: {
+      default: false,
+      vendors: {
+        name: 'chunk-vendors',
+        test: /[\\/]node_modules[\\/](?!(vue|element-ui))/,
+        priority: 10, // 优先级，默认组的优先级为负数，以允许任何自定义缓存组具有更高的优先级（默认值为0）
+        chunks: 'all'
+      },
+      vue: {
+        name: 'vue',
+        test: /[\\/]node_modules[\\/]vue/,
+        chunks: 'all',
+        priority: 0
+      },
+      elementUI: {
+        name: 'element-ui',
+        test: /[\\/]node_modules[\\/]element-ui[\\/]/,
+        chunks: 'all',
+        priority: -10
+      },
+      common: {
+        name: 'chunk-common',
+        minChunks: 2,
+        priority: -15,
+        chunks: 'all',
+        reuseExistingChunk: true
+      }
+    }
+  }
+}
+8.动态导入import
+  魔法注释,import(/* 魔法注释内容 */, 'LoginModal')
+  webpack4.6.0+添加了预取prefetch和预加载preload
+  prefetch会在浏览器空闲时提前加载资源
+  import(/* webpackPrefetch: true */ 'LoginModal');
+  preload会直接提前加载资源
+  import(/* webpackPreload: true */ 'LoginModal');
+9.作用域提示scope hosting
+打包后相互依赖的包会放到一个函数里，会减小一点bundle的体积
+optimization: {
+  cancatenateModules: true
+}
+
+开发配置文件优化
+1.拆分配置文件，将配置资源拆分成基础配置，开发配置，生产配置，然后使用webpack-merge进行引用基础配置合并到开发和生产的配置
+2.通过env.prodution和cross-env两种方式在脚本命令行设置环境变量
+使用env.prodution设置的时候，配置文件需要导出一个函数，并且在参数里接收env
+"build": "webpack --env.production
+module.exports = (env) => {
+  console.log(env.production)
+}
+使用cross-env设置的时候，配置文件中用process.env接收
+"build": "cross-env NODE_ENV=prd webpack --env.production
+console.log(process.env.NODE_ENV) 
